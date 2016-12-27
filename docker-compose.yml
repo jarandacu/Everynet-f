@@ -1,0 +1,64 @@
+traefik:
+  image: traefik:v1.1.0-rc3
+  container_name: traefik
+  command: >-
+    --logLevel=INFO 
+    --docker --docker.constraints="tag==web"
+    --accessLogsFile="/dev/stdout"
+    --web --web.address=":8888"
+    --defaultentrypoints="http,https"
+    --entryPoints='Name:http Address::80 Redirect.EntryPoint:https'
+    --entryPoints='Name:https Address::443 TLS'
+    --acme --acme.email="admin@everynet.com" --acme.domains=lora.run --acme.entryPoint=https --acme.storage=/certs/acme.json
+  ports:
+     - "443:443"
+     - "80:80"
+     - "127.0.0.1:8888:8888"
+  volumes:
+    - /dev/null:/traefik.toml
+    - /var/run/docker.sock:/var/run/docker.sock
+    - /data/certs:/certs
+  restart: always
+
+mysql:
+  restart: always
+  image: mysql:5.6
+  ports:
+    - "127.0.0.1:33306:3306/tcp"
+  environment:
+     - MYSQL_ROOT_PASSWORD=root
+     - MYSQL_USER=root
+  volumes:
+    - /data/mysql:/var/lib/mysql
+
+redis:
+  stdin_open: true
+  restart: always
+  tty: true
+  image: redis:3.2.3
+  command: redis-server --appendonly no --dir /data --cluster-enabled no --protected-mode no --maxmemory 128M --maxmemory-policy allkeys-lru --maxmemory-samples 5
+  ports:
+    - "127.0.0.1:56379:6379/tcp"
+  volumes:
+    - /data/redis:/data
+
+everynetdemo:
+  restart: always
+  stdin_open: true
+  tty: true
+  build: .
+  ports:
+    - "127.0.0.1:8080:8080/tcp"
+  links:
+    - "mysql"
+    - "redis"
+  environment:
+    - MYSQL_HOST=mysql
+    - MYSQL_USER=root
+    - MYSQL_DB=lora
+    - MYSQL_PWD=root
+    - REDIS_HOST=redis
+  labels:
+    - "traefik.port=8080"
+    - "traefik.frontend.rule=Host:lora.run"
+    - "traefik.tags=web"

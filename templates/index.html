@@ -1,0 +1,209 @@
+{% extends "base.html" %}
+
+{% block head %}
+    <style type="text/css">
+        #topbar {
+            background-color: #333;
+            color: white;
+            text-shadow: 0 1px 3px rgba(0,0,0,.5);
+        }
+
+        #topbar .row {
+            padding: 5px;
+        }
+
+        #bottombar {
+            position: absolute;
+            right: 50%;
+            bottom: 0;
+            margin-bottom: 18px;
+        }
+    </style>
+
+    <script type="text/javascript">
+        var ViewModel = function() {
+            var self = this;
+            
+            self.eventSource  = null;
+            self.lastPacketId = null;
+            self.connectTime  = null;
+            self.reconnectInterval = 1000;
+            
+            self.connected = ko.observable(false);
+            self.packets   = ko.observableArray();
+            
+            self.startPacketListener = function(lastPacketId) {
+                if (self.eventSource != null) {
+                    self.eventSource.close();
+                    self.eventSource = null;
+                }
+
+                self.eventSource = new EventSource("/stream?last_packet_id=" + lastPacketId + "&group=" + "{{ group or '' }}");
+                self.eventSource.onerror = function(e) {
+                    console.log("Disconnected! Reconncting in " + self.reconnectInterval);
+                    self.eventSource.close();
+                    self.connected(false);
+                    setTimeout(function() { self.startPacketListener(self.lastPacketId); }, self.reconnectInterval );
+                };
+
+                self.eventSource.onopen = function(e) {
+                    console.log("Connected!");
+                    self.connected(true);
+                    self.connectTime = moment();
+                };
+
+                self.eventSource.onmessage = function(e) {
+                    console.log("Data: " + e.data);
+                    if (e.data == "ping")
+                        return;
+                    
+                    var packet = JSON.parse(e.data);
+                    if (self.packets().length > 1000)
+                        self.packets.splice(-1, 1);
+                    
+                    self.lastPacketId  = packet["packet_id"];
+                    packet["dev_eui"]  = self.getFormatedHex(packet["dev_eui"]);
+                    packet["dev_addr"] = self.getFormatedHex(packet["dev_addr"]);
+                    packet["rx_time"]  = moment.unix(packet["rx_time"]).format("HH:mm:ss DD/MM/YYYY");
+                    self.packets.splice(0, 0, packet);
+                    
+                    if (self.connectTime && moment().diff(self.connectTime, 'seconds') > 6) {
+                        self.highlightNewPacket();
+                    }
+                };
+            };
+            
+            self.getFormatedHex = function(s) {
+                var result = "";
+                for (var i = 0; i < s.length; i += 2) {
+                    result += s.substring(i, i+2);
+                    result += ":";
+                }
+                return result.toUpperCase().substring(0, result.length-1);
+            }
+
+            self.getPrivateLink = function() {
+                var rndKey = "";
+                var chars  = "abcdefghijklmnopqrstuvwxyz0123456789";
+                for(var i=0; i < 16; i++ )
+                    rndKey += chars.charAt(Math.floor(Math.random() * chars.length));
+                return window.location.origin + '/' + rndKey;
+            }
+            
+            self.highlightNewPacket = function() {
+                var row = $("#packets tr:eq(1)").css('backgroundColor','#F0E68C');
+                setTimeout(function(){ row.css('backgroundColor',''); }, 1000);
+            };
+            
+            self.startPacketListener(null);
+        }
+        
+        $(function(){
+            var viewModel = new ViewModel({});
+            ko.applyBindings(viewModel);
+        });
+    </script>
+{% endblock %}
+
+{% block content%}
+
+    <div id="topbar" class="container-fluid">
+        <div class="row">
+            <div class="col-md-3" style="padding-left: 20px;" id="everynet_logo">
+                <img src="/static/everynet_logo_sub.png" alt="" />
+                &nbsp; | &nbsp; LORA STREAM
+            </div>
+            <div class="col-md-6">
+            </div>
+            <div class="col-md-3" align="right" id="microchip_logo">
+               <img src="/static/microchip_logo_index.png" alt="" style="padding-top:5px;" />
+            </div>
+        </div>
+    </div>
+
+    <table class="table table-hover" id="packets" width="90%">
+        <thead>
+            <tr>
+                <th>Dev EUI</th>
+                <th>Dev addr</th>
+                <th>Time</th>
+                <th>RSSI</th>
+                <th>SNR</th>
+                <th>Counter</th>
+                <th>Data</th>
+            </tr>
+        </thead>
+        <!-- ko if: packets().length == 0-->
+            <tbody>
+                <tr>
+                    <td colspan="7" align="center">Waiting for packets...</td>
+                </tr>
+            </tbody>
+        <!-- /ko -->
+
+        <!-- ko if: packets().length -->
+            <tbody data-bind="foreach: packets">
+                <tr>
+                    <td width="20%">
+                        <span data-bind="text: dev_eui"></span>
+                    </td>
+                    <td width="10%">
+                        <span data-bind="text: dev_addr"></span>
+                    </td>
+                    <td width="30%">
+                        <span data-bind="text: rx_time"></span>
+                    </td>
+                    <td width="10%">
+                        <span data-bind="text: rssi || '-'"></span>
+                    </td>
+                    <td width="10%">
+                        <span data-bind="text: lsnr || '-'"></span>
+                    </td>
+                    <td width="10%">
+                        <span data-bind="text: counter_up || '-'"></span>
+                    </td>
+                    <td width="40%">
+                        <span data-bind="text: payload"></span>
+                    </td>
+                </tr>
+            </tbody>
+        <!-- /ko -->
+    </table>
+
+
+    <!-- Button trigger modal -->
+    <div class="modal fade" id="privateModal" tabindex="-1" role="dialog">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close"><span aria-hidden="true">&times;</span></button>
+                    <h4 class="modal-title">Information</h4>
+                </div>
+                <div class="modal-body">
+                    <span>
+                        You have created a private HTTP Core API URL:
+                        <strong id="privateURL" data-bind="text: getPrivateLink()"></strong>
+                        <br /><br />
+                        Just copy and paste it in "Application Server URL" field.
+                    </span>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-primary" onclick="$(location).attr('href', $('#privateURL').text())">OK</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <div id="bottombar">
+        {% if group %}
+            <button type="button" class="btn btn-warning btn-lg" onclick="$(location).attr('href', '/')">
+                <span class="glyphicon glyphicon-chevron-left" aria-hidden="true"></span> Back to public
+            </button>
+        {% else %}
+            <button type="button" class="btn btn-success btn-lg" data-toggle="modal" data-target="#privateModal">
+                <span class="glyphicon glyphicon-sunglasses" aria-hidden="true"></span> Create private
+            </button>
+        {% endif %}
+    </div>
+{% endblock %}
